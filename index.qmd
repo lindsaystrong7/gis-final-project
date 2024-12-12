@@ -1,9 +1,9 @@
 ---
-title: "Coup-Proofing via Capital Relocation"
+title: "Assessing Amtrak Trespasser Fatalities in California"
 subtitle: "DSAN 6750 / PPOL 6805: GIS for Spatial Data Science"
 authors:
-  - name: Jeff Jacobs
-    email: jj1088@georgetown.edu
+  - name: Lindsay Strong
+    email: ls1568@georgetown.edu
     affiliation: Georgetown University
     corresponding: true
 df-print: kable
@@ -58,18 +58,100 @@ Here, the population centroids are drawn from @hall_population_2019
 Here we plot the base GIS objects we're analyzing: the location of each **capital city** (in purple) and each **population centroid** (in yellow).
 
 ```{r}
-#| label: imports
-library(tidyverse) |> suppressPackageStartupMessages()
-library(sf) |> suppressPackageStartupMessages()
-library(mapview) |> suppressPackageStartupMessages()
-library(units) |> suppressPackageStartupMessages()
-cb_palette <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+# import libraries and csv
+cb_palette <- c(
+  "#E69F00", "#56B4E9", "#009E73", "#F0E442","#0072B2", "#D55E00", "#CC79A7"
+)
+library(sf)
+library(readr)
+library(mapview)
+trespasser_df <- read_csv("Trespasser_Fatalities_20241118.csv")
+trespasser_sf <- trespasser_df |> st_as_sf(wkt="the_geom", crs=4326)
+library(dplyr)
+# getting only Amtrak trespasser strikes
+trespasser_sf <- trespasser_sf |> filter(RAILROAD == "ATK") |> filter(StateName == "CA")
+mapview(trespasser_sf)
 ```
 
 ```{r}
-#| label: load-eda
-merged_long_sf <- readRDS("merged_long_sf.rds")
-mapview(merged_long_sf, zcol="name", cex=4, label="geounit")
+library(tigris)
+library(tidycensus)
+library(tidyverse)
+options(tigris_use_cache = TRUE)
+census_api_key("22de4cafe1259cf144997981fc5e359e41276773", install = TRUE, overwrite = TRUE)
+
+
+california <- get_acs(
+  state = "CA",
+  geography = "tract",
+  variables = c("B01003_001", "B25043_001"),
+  geometry = TRUE,
+  year = 2020
+)
+
+california_tracts <- california |> select(-moe) |>
+  pivot_wider(
+    names_from = variable,  
+    values_from = estimate, 
+    names_glue = "{variable}" 
+  ) |> mutate(
+    population_density = B01003_001 / B25043_001
+  ) |> select(-B01003_001, -B25043_001)
+
+trespasser_sf <- st_transform(trespasser_sf, crs=3587)
+california_tracts <- st_transform(california_tracts, crs=3587)
+#intersecting_indices <- st_intersects(trespasser_sf, california_tracts)
+california_tracts <- st_join(california_tracts, trespasser_sf, join = st_contains) |> group_by(GEOID, NAME, geometry, population_density,) |> summarise(strike_count = sum(!is.na(OBJECTID)), .groups = 'drop')
+
+california_tracts_with_strikes <- california_tracts |> filter(strike_count > 0) |> na.omit()
+mapview(california_tracts_with_strikes, zcol="strike_count")
+```
+
+```{r}
+# library(tidycensus)
+# library(dplyr)
+# library(sf)
+# library(tigris)
+
+# census_api_key("22de4cafe1259cf144997981fc5e359e41276773", install = TRUE, overwrite = TRUE)
+
+# library(tidycensus)
+# library(tidyverse)
+# options(tigris_use_cache = TRUE)
+
+# california <- get_acs(
+#   state = "CA",
+#   geography = "tract",
+#   variables = c("B01003_001", "B25043_001"),
+#   geometry = TRUE,
+#   year = 2021
+# )
+
+# california <- st_transform(california, crs = 4326)
+
+# intersecting_indices <- st_intersects(california, route_sf)
+# intersecting_tracts <- california[!sapply(intersecting_indices, is_empty), ]
+# intersecting_tracts <- intersecting_tracts %>% dplyr::select(-moe)
+
+# intersecting_tracts <- intersecting_tracts %>%
+#   pivot_wider(
+#     names_from = variable,  
+#     values_from = estimate, 
+#     names_glue = "{variable}" 
+#   )
+
+# intersecting_tracts <- intersecting_tracts %>%
+#   mutate(
+#     population_density = B01003_001 / B25043_001
+#   )
+
+# intersecting_trespasser_indices<- st_intersects(trespasser_sf, intersecting_tracts)
+# california_strikes <- trespasser_sf[!sapply(intersecting_trespasser_indices, is_empty), ]
+# tracts_with_strikes <- st_join(intersecting_tracts, california_strikes, join = st_contains, left = TRUE)
+# strikes_per_tract <- tracts_with_strikes %>%
+#   group_by(GEOID, NAME, geometry, population_density, B01003_001) %>%
+#   summarise(strike_count = sum(!is.na(OBJECTID)), .groups = 'drop')
+# mapview(strikes_per_tract, zcol="strike_count", layer.name = "Number of Trespasser Fatalities")
 ```
 
 We then construct an **area-normalized** measure of capital-centroid distance $\text{dist}^{\textsf{AN}}$, using the formula
@@ -82,24 +164,135 @@ A plot of this measure by country looks as follows:
 
 ```{r}
 #| label: plot-area
-merged_area_sf <- readRDS("merged_area_sf.rds")
-mapview(merged_area_sf, zcol="scaled_dist")
+#merged_area_sf <- readRDS("merged_area_sf.rds")
+#mapview(merged_area_sf, zcol="scaled_dist")
 ```
 
 ## Hypothesis Testing (Regression)
 
 ```{r}
-#| label: plot-regression
-merged_sub_sf <- readRDS("merged_sub_sf.rds")
-merged_sub_sf |> head()
+library(spatstat)
+strike_tract_centroids <- st_centroid(california_tracts_with_strikes)
+strike_tract_centroids <- st_transform(strike_tract_centroids)
+hull_sf <- st_convex_hull(st_union(strike_tract_centroids))
+hull_sf <- st_buffer(hull_sf, dist=1000)
 ```
 
 ```{r}
-merged_sub_sf |> ggplot(aes(x=scaled_dist, y=total_score, label=NAME_ENGLI)) +
-  geom_point() +
-  geom_smooth(method='lm', formula= y~x) +
-  geom_text(size=4, nudge_y = 0.075) +
+library(dplyr)
+pop_sf <- strike_tract_centroids |> dplyr::select(population_density)
+pop_sf <- st_transform(pop_sf, crs=3587)
+hull_sf <- st_transform(hull_sf, crs=3587)
+point_coords <- st_coordinates(pop_sf)
+marks_data <- pop_sf$population_density
+pop_ppp <- ppp(x = point_coords[, 1], 
+               y = point_coords[, 2], 
+               marks = marks_data, 
+               window = as.owin(hull_sf))
+#pop_ppp <- as.ppp(pop_sf, W=as.owin(hull_sf))
+plot(density(pop_ppp), main="Density by Centroids")
+plot(density(pop_ppp, weights=pop_ppp$marks), main="Density by Population Density")
+pop_int <- density(pop_ppp, weights=pop_ppp$marks)
+```
+
+```{r}
+num_regions <- 3
+region_labels <- c("Low", "Medium", "High")
+pop_vals <- pop_int
+pop_quant <- quantile(pop_vals, probs=(0:num_regions)/num_regions, na.rm=TRUE)
+pop_cut <- cut(pop_vals, breaks=pop_quant, labels=region_labels)
+pop_areas <- tess(image=pop_cut)
+plot(pop_areas)
+```
+
+```{r}
+strike_ppp <- as.ppp(st_as_sfc(trespasser_sf), Window(pop_ppp))
+plot(density(strike_ppp))
+```
+
+```{r}
+obs_strike_counts <- quadratcount(strike_ppp, tess=pop_areas) |> as.vector()
+names(obs_strike_counts) <- region_labels
+obs_strike_counts
+```
+
+```{r}
+set.seed(6805)
+compute_quadrat_counts <- function(sim_ppp) {
+  sim_counts <- quadratcount(sim_ppp, tess=pop_areas) |> as.vector()
+  names(sim_counts) <- region_labels
+  return(sim_counts)
+}
+gen_sims_ppp <- function(num_sims) {
+  strike_sims <- spatstat.random::rpoint(
+    n = nrow(trespasser_sf),
+    f = pop_int,
+    nsim = num_sims
+  )
+  return(strike_sims)
+}
+full_sims_list <- gen_sims_ppp(num_sims = 999)
+full_sim_area_counts <- lapply(X=full_sims_list, FUN=compute_quadrat_counts)
+full_count_df <- as_tibble(full_sim_area_counts) |> t() |> as_tibble()
+colnames(full_count_df) <- region_labels
+
+mc_df <- bind_rows(full_count_df, obs_strike_counts)
+full_count_df |> ggplot(aes(x=High)) +
+  #geom_bar(stat='count') +
+  geom_density(fill=cb_palette[2], alpha=0.5) +
+  geom_vline(xintercept = obs_strike_counts["High"], linetype="dashed", color=cb_palette[1]) +
   theme_classic()
+```
+
+```{r}
+q4_more_extreme_df <- mc_df[mc_df$High >= obs_strike_counts["High"],]
+q4_prop_more_extreme <- nrow(q4_more_extreme_df) / nrow(mc_df)
+q4_prop_more_extreme
+```
+
+```{r}
+mc_df <- bind_rows(full_count_df, obs_strike_counts)
+full_count_df |> ggplot(aes(x=Medium)) +
+  #geom_bar(stat='count') +
+  geom_density(fill=cb_palette[2], alpha=0.5) +
+  geom_vline(xintercept = obs_strike_counts["Medium"], linetype="dashed", color=cb_palette[1]) +
+  theme_classic()
+```
+
+```{r}
+q4_more_extreme_df <- mc_df[mc_df$Medium <= obs_strike_counts["Medium"],]
+q4_prop_more_extreme <- nrow(q4_more_extreme_df) / nrow(mc_df)
+q4_prop_more_extreme
+```
+
+```{r}
+mc_df <- bind_rows(full_count_df, obs_strike_counts)
+full_count_df |> ggplot(aes(x=Low)) +
+  #geom_bar(stat='count') +
+  geom_density(fill=cb_palette[2], alpha=0.5) +
+  geom_vline(xintercept = obs_strike_counts["Low"], linetype="dashed", color=cb_palette[1]) +
+  theme_classic()
+```
+
+```{r}
+q4_more_extreme_df <- mc_df[mc_df$Medium <= obs_strike_counts["Medium"],]
+q4_prop_more_extreme <- nrow(q4_more_extreme_df) / nrow(mc_df)
+q4_prop_more_extreme
+```
+
+
+```{r}
+#| label: plot-regression
+#merged_sub_sf <- readRDS("merged_sub_sf.rds")
+#merged_sub_sf |> head()
+```
+
+```{r}
+#merged_sub_sf |> ggplot(aes(x=scaled_dist, y=total_score, label=NAME_ENGLI)) +
+#  geom_point() +
+#  geom_smooth(method='lm', formula= y~x) +
+#  geom_text(size=4, nudge_y = 0.075) +
+ # theme_classic()
 ```
 
 ## Discussion
