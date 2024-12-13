@@ -91,7 +91,7 @@ california_tracts <- st_transform(california_tracts, crs=3587)
 california_tracts <- st_join(california_tracts, trespasser_sf, join = st_contains) |> group_by(GEOID, NAME, geometry, population_density,) |> summarise(strike_count = sum(!is.na(OBJECTID)), .groups = 'drop')
 
 california_tracts_with_strikes <- california_tracts |> filter(strike_count > 0) |> na.omit()
-#mapview(california_tracts_with_strikes, zcol="strike_count", layer.name = "Number of Strikes")
+mapview(california_tracts_with_strikes, zcol="strike_count", layer.name = "Number of Strikes")
 ```
 
 ### Global Moran's I
