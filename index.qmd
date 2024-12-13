@@ -120,7 +120,7 @@ spatial_weights <- poly2nb(as(california_tracts$geometry, "Spatial"), queen=TRUE
 weights_list <- nb2listw(spatial_weights, style = "W", zero.policy = TRUE)
 clust_localmoran_result <- localmoran(california_tracts$strike_count, weights_list)
 california_tracts$Ii <- clust_localmoran_result[,"Ii"]
-#mapview(california_tracts, zcol="Ii", layer.name = "Local Moran's I")
+mapview(california_tracts, zcol="Ii", layer.name = "Local Moran's I")
 ```
 
 ## Hypothesis Testing
