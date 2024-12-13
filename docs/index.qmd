@@ -1,5 +1,5 @@
 ---
-title: "Assessing Amtrak Trespasser Fatalities in California"
+title: "Assessing the Relationship between Train Strike Trespasser Fatalities in California and Population Density"
 subtitle: "DSAN 6750 / PPOL 6805: GIS for Spatial Data Science"
 authors:
   - name: Lindsay Strong
@@ -8,7 +8,7 @@ authors:
     corresponding: true
 df-print: kable
 bibliography: GIS_Manuscript.bib
-title-block-banner: "#E69F0095"
+title-block-banner: "#8FBB99"
 title-block-banner-color: "black"
 format:
   html:
@@ -21,41 +21,25 @@ prefer-html: true
 
 ## Introduction
 
-Several previous studies have found robust relationships between spatial properties of a country's **capital city** and that country's propensity for **conflict** and **misgovernance**.
+From 2012-2017, there were 3,687 railroad trespasser fatalities across the United States [@kidda2020fatal]. Previous studies have assessed the trends among trespesser strikes and emphasized that trespasser strikes are an urban problem opposed to a rural problem. I will assess the relationship between population density and trespasser strikes using spatial data science techniques. 
 
-Perceptions of this linkage also have an effect on "coup-proofing" decisions made by national governments. A recent BBC interview with Equatorial Guinea's President Teodoro Obiang, for example, highlighted this as a factor behind his decision to relocate the capital city:
+As California has the most trespasser fatalities out of any US state, I will be limiting my analysis to California [@kidda2020fatal]. I will use trespasser strike data from the Department of Transportation which includes point data for the latitude and longitude of the strike.  
 
-> It's the remoteness of Oyala that makes it so appealing to President Obiang. In a rare interview he described how rebels had recently plotted a seaborne assault on his palace in the current capital, Malabo. 'We need a secure place for my government and for future governments. That's why we have created Oyala, to guarantee the government of Equatorial Guinea.' [@sackur_equatorial_2012]
-
-This case is far from exceptional, as an even more recent *Washington Post* article points out with respect to Myanmar's decision to move its capital from Yangon to Naypyidaw:
-
-> Analysts have described the decision as motivated by a desire to secure the military’s seat of power from any threat of protests or invasions. [@berger_myanmars_2021]
-
-Most of these studies, however, are based on observations of **conflict events**. In this study, we study the more fundamental variable of a capital's distance from the **population centroid** of the country.
+By assessing the relationship between trespasser fatalities in California and population density, I hope to apply my findings to targeted interventions to prevent future trespasser strikes. 
 
 ## Literature Review
 
-@campante_capital_2019 analyzes the relationship between the location of a **capital city** and the degree of conflict and misgovernance in a given country. Their two key findings are that:
+The Federal Rail Association (FRA) assessed trends in trespasser train strikes from 2012-2017. California, New York, Florida and Texas had the most trespasser strikes across U.S. states [@kidda2020fatal]. The FRA identified trends among suicides, train types, time of day, age, and individual's action at the time of death [@kidda2020fatal]. This paper does not assess the relationship between population density and trespasser strikes. 
 
-> Conflict is more likely to emerge (and dislodge incumbents) closer to the capital
-
-and
-
-> Isolated capitals are associated with misgovernance.
-
-This first finding is illustrated in @fig-conflict-dist
-
-![](images/conflict_dist.svg){#fig-conflict-dist}
+Northwestern economics professor, Ian Savage, notes in his manuscript on *Trespassing the Railroad* in 2007 that trespasser strikes appear to be an urban problem opposed to a city one as "less than one quarter of fatalities occur outside of town or city limits" [@savage2007trespassing]. 
 
 ## Methodology
 
-The **population centroids** we use herein might require some explanation, since the term "centroid" can be ambiguous.
-
-Here, the population centroids are drawn from @hall_population_2019
+For **population density**, I used California census tract data from 2020 using tidycensus and divided the total population by the total area for each tract. For the hypothesis testing, I computed the centroid of these census tracts for my underlying density.
 
 ## Exploratory Data Analysis (EDA)
 
-Here we plot the base GIS objects we're analyzing: the location of each **capital city** (in purple) and each **population centroid** (in yellow).
+The map below shows the 1,528 trespasser fatalities (in purple) California from 2011-2022.
 
 ```{r}
 # import libraries and csv
@@ -69,9 +53,12 @@ trespasser_df <- read_csv("Trespasser_Fatalities_20241118.csv")
 trespasser_sf <- trespasser_df |> st_as_sf(wkt="the_geom", crs=4326)
 library(dplyr)
 # getting only Amtrak trespasser strikes
-trespasser_sf <- trespasser_sf |> filter(RAILROAD == "ATK") |> filter(StateName == "CA")
-mapview(trespasser_sf)
+#trespasser_sf <- trespasser_sf |> filter(RAILROAD == "ATK") |> filter(StateName == "CA")
+trespasser_sf <- trespasser_sf |> filter(StateName == "CA")
+mapview(trespasser_sf, layer.name = "Trespasser Fatality")
 ```
+
+By looking at only census tracts where fatalities have occured, we can see hotspots for strikes in Northern California, specifically around the Richmond and Berkeley area as well as around the Davis area and Modesto area. There appear to be fewer strikes in southern California but there appears to be a cluster around the Pomona and Ontario area.
 
 ```{r}
 library(tigris)
@@ -104,71 +91,47 @@ california_tracts <- st_transform(california_tracts, crs=3587)
 california_tracts <- st_join(california_tracts, trespasser_sf, join = st_contains) |> group_by(GEOID, NAME, geometry, population_density,) |> summarise(strike_count = sum(!is.na(OBJECTID)), .groups = 'drop')
 
 california_tracts_with_strikes <- california_tracts |> filter(strike_count > 0) |> na.omit()
-mapview(california_tracts_with_strikes, zcol="strike_count")
+#mapview(california_tracts_with_strikes, zcol="strike_count", layer.name = "Number of Strikes")
 ```
+
+### Global Moran's I
+
+Using Moran's I for spatial autocorrelation, we can determine if the data is clustered and we can use Local Moran's I to identify where these clusters lie. I used all of the census tracts across California, even those without strikes, in order to access clustering.
+
+The result from Moran's I test is displayed below.
+```{r}
+library(spdep)
+california_tracts <- california_tracts[!st_is_empty(california_tracts), ]
+nb_object <- spdep::poly2nb(california_tracts)
+#listw object construction
+listw_object <- spdep::nb2listw(nb_object, zero.policy = TRUE)
+clust_grid_autocorr <- spdep::moran(california_tracts$strike_count, listw_object, n=length(nb_object), S0 = Szero(listw_object))$I
+print(clust_grid_autocorr)
+```
+
+A value of roughly 0.16 indicates a slight positive autocorrelation so we can conclude that nearby census tracts have slightly similar numbers of strikes.
+
+### Local Moran's I
+
+Local Moran's I test identifies areas where strikes are clustered together. The results of Local Moran's I test can be shown in the map below.
 
 ```{r}
-# library(tidycensus)
-# library(dplyr)
-# library(sf)
-# library(tigris)
-
-# census_api_key("22de4cafe1259cf144997981fc5e359e41276773", install = TRUE, overwrite = TRUE)
-
-# library(tidycensus)
-# library(tidyverse)
-# options(tigris_use_cache = TRUE)
-
-# california <- get_acs(
-#   state = "CA",
-#   geography = "tract",
-#   variables = c("B01003_001", "B25043_001"),
-#   geometry = TRUE,
-#   year = 2021
-# )
-
-# california <- st_transform(california, crs = 4326)
-
-# intersecting_indices <- st_intersects(california, route_sf)
-# intersecting_tracts <- california[!sapply(intersecting_indices, is_empty), ]
-# intersecting_tracts <- intersecting_tracts %>% dplyr::select(-moe)
-
-# intersecting_tracts <- intersecting_tracts %>%
-#   pivot_wider(
-#     names_from = variable,  
-#     values_from = estimate, 
-#     names_glue = "{variable}" 
-#   )
-
-# intersecting_tracts <- intersecting_tracts %>%
-#   mutate(
-#     population_density = B01003_001 / B25043_001
-#   )
-
-# intersecting_trespasser_indices<- st_intersects(trespasser_sf, intersecting_tracts)
-# california_strikes <- trespasser_sf[!sapply(intersecting_trespasser_indices, is_empty), ]
-# tracts_with_strikes <- st_join(intersecting_tracts, california_strikes, join = st_contains, left = TRUE)
-# strikes_per_tract <- tracts_with_strikes %>%
-#   group_by(GEOID, NAME, geometry, population_density, B01003_001) %>%
-#   summarise(strike_count = sum(!is.na(OBJECTID)), .groups = 'drop')
-# mapview(strikes_per_tract, zcol="strike_count", layer.name = "Number of Trespasser Fatalities")
+spatial_weights <- poly2nb(as(california_tracts$geometry, "Spatial"), queen=TRUE, )
+weights_list <- nb2listw(spatial_weights, style = "W", zero.policy = TRUE)
+clust_localmoran_result <- localmoran(california_tracts$strike_count, weights_list)
+california_tracts$Ii <- clust_localmoran_result[,"Ii"]
+#mapview(california_tracts, zcol="Ii", layer.name = "Local Moran's I")
 ```
 
-We then construct an **area-normalized** measure of capital-centroid distance $\text{dist}^{\textsf{AN}}$, using the formula
+## Hypothesis Testing
 
-$$
-\text{dist}^{\textsf{AN}}_i = \text{dist}_i / \sqrt{\text{area}_i}.
-$$
+I will conduct hypothesis testing using 999 monte carlo simulations. My hypotheses are as follows:
 
-A plot of this measure by country looks as follows:
+**Null Hypothesis**: The number of trespasser fatalities in census tracts is directly proportional to its population density.
 
-```{r}
-#| label: plot-area
-#merged_area_sf <- readRDS("merged_area_sf.rds")
-#mapview(merged_area_sf, zcol="scaled_dist")
-```
+**Alternative Hypothesis**: The number of trespasser fatalities in census tracts is greater than or less than what would be expected by population density alone.
 
-## Hypothesis Testing (Regression)
+This is a first-order hypothesis as we are accessing a direct relationship between fatalities and population density. The underlying density is shown below and is computed using the population densities of the centroids of each census tract with fatalities. The high density areas in San Francisco and Los Angeles are shown in yellow on the density plot.
 
 ```{r}
 library(spatstat)
@@ -190,10 +153,11 @@ pop_ppp <- ppp(x = point_coords[, 1],
                marks = marks_data, 
                window = as.owin(hull_sf))
 #pop_ppp <- as.ppp(pop_sf, W=as.owin(hull_sf))
-plot(density(pop_ppp), main="Density by Centroids")
-plot(density(pop_ppp, weights=pop_ppp$marks), main="Density by Population Density")
+plot(density(pop_ppp, weights=pop_ppp$marks), main="Population Density")
 pop_int <- density(pop_ppp, weights=pop_ppp$marks)
 ```
+
+We will divide the population density into three population density areas (high density, medium density, and low density) in order to run hypothesis testing. The density plot below shows that there is higher population density closer to San Francisco and Los Angeles with lower population density closer on the eastern side of California.
 
 ```{r}
 num_regions <- 3
@@ -202,19 +166,31 @@ pop_vals <- pop_int
 pop_quant <- quantile(pop_vals, probs=(0:num_regions)/num_regions, na.rm=TRUE)
 pop_cut <- cut(pop_vals, breaks=pop_quant, labels=region_labels)
 pop_areas <- tess(image=pop_cut)
-plot(pop_areas)
+plot(pop_areas, main="Population Density Simplified")
 ```
+
+In order to access our hypothesis, we must compute the intensity function for trespasser fatalities. The intensity function is shown below. The density plot highlights the concentration of strikes in Northern California around San Francisco. 
 
 ```{r}
 strike_ppp <- as.ppp(st_as_sfc(trespasser_sf), Window(pop_ppp))
-plot(density(strike_ppp))
+plot(density(strike_ppp), main="Trespasser Fatalities Density")
 ```
+
+Using the fatality intensity function and the population density areas, we can compute the number of fatalities in high density, medium density, and low density areas. These values are shown below.
 
 ```{r}
 obs_strike_counts <- quadratcount(strike_ppp, tess=pop_areas) |> as.vector()
 names(obs_strike_counts) <- region_labels
 obs_strike_counts
 ```
+
+After running 999 monte carlo simulations, we can show the distribution of the fatalities in each of the density areas compared to the observed number of fatalities in those areas.
+
+### High Density Areas
+
+There were no simulations with as many fatalities in high density areas as our observed data. This is shown by the output of 0.001 below, where the result is the number of rows that have greater than or equal to the observed value dividing by the rows in the simulated data plus one row of the observed data. 
+
+We can conclude that the number of trespasser fatalities in high density areas is significantly greater than what would be expected by population density alone.
 
 ```{r}
 set.seed(6805)
@@ -225,7 +201,7 @@ compute_quadrat_counts <- function(sim_ppp) {
 }
 gen_sims_ppp <- function(num_sims) {
   strike_sims <- spatstat.random::rpoint(
-    n = nrow(trespasser_sf),
+    n = 1521,
     f = pop_int,
     nsim = num_sims
   )
@@ -244,11 +220,18 @@ full_count_df |> ggplot(aes(x=High)) +
   theme_classic()
 ```
 
+
 ```{r}
 q4_more_extreme_df <- mc_df[mc_df$High >= obs_strike_counts["High"],]
 q4_prop_more_extreme <- nrow(q4_more_extreme_df) / nrow(mc_df)
 q4_prop_more_extreme
 ```
+
+### Medium Density Areas
+
+There were no simulations with as few fatalities in medium density areas as our observed data. This is shown by the output of 0.001 below, where the result is the number of rows that have less than or equal to the observed value dividing by the rows in the simulated data plus one row of the observed data. 
+
+We can conclude that the number of trespasser fatalities in medium density areas is significantly less than what would be expected by population density alone.
 
 ```{r}
 mc_df <- bind_rows(full_count_df, obs_strike_counts)
@@ -265,6 +248,13 @@ q4_prop_more_extreme <- nrow(q4_more_extreme_df) / nrow(mc_df)
 q4_prop_more_extreme
 ```
 
+
+### Low Density Areas
+
+Similar to medium density areas, there were no simulations with as few fatalities in low density areas as our observed data. This is shown by the output of 0.001 below, where the result is the number of rows that have less than or equal to the observed value dividing by the rows in the simulated data plus one row of the observed data. 
+
+We can conclude that the number of trespasser fatalities in low density areas is significantly less than what would be expected by population density alone.
+
 ```{r}
 mc_df <- bind_rows(full_count_df, obs_strike_counts)
 full_count_df |> ggplot(aes(x=Low)) +
@@ -280,23 +270,17 @@ q4_prop_more_extreme <- nrow(q4_more_extreme_df) / nrow(mc_df)
 q4_prop_more_extreme
 ```
 
-
-```{r}
-#| label: plot-regression
-#merged_sub_sf <- readRDS("merged_sub_sf.rds")
-#merged_sub_sf |> head()
-```
-
-```{r}
-#merged_sub_sf |> ggplot(aes(x=scaled_dist, y=total_score, label=NAME_ENGLI)) +
-#  geom_point() +
-#  geom_smooth(method='lm', formula= y~x) +
-#  geom_text(size=4, nudge_y = 0.075) +
- # theme_classic()
-```
+We can **reject** the null hypothesis and conclude that the number of trespasser fatalities in census tracts is greater than or less than what would be expected by population density alone. Further, trespasser fatalities are higher than what would be observed by population density and trespasser fatalities in medium and low density areas are lower than what would be expected by population density.
 
 ## Discussion
 
+The results of our hypothesis test indicate that the number of trespasser fatalities in census tracts are not soley dependent on the population density alone. By rejecting the null hypothesis, we can conclude that there are other contributing factors to trespasser fatalities in an area in addition to the number of people. 
+
+High density areas experience significantly higher rates of fatalities than what would be expected on population density alone. This suggests that other factors in areas in addition to population density could be at play. For example, homelessness tends to exist primarily in urban areas and homeless individuals often make encapments next to the railroad. This could increase the likilihood of being hit by the train. 
+
+Medium and low density areas experience a significantly lower amount of strikes than would be expected based on population density alone. This could be due to less frequent train service, fewer homeless people, or less pedestrians near the train tracks.
+
+
 ## Conclusion
 
-Our evidence indicates that the spatial dynamics of **conflict** differ from the spatial dynamics of **misgovernance**. Whereas 
+Trespasser fatalities in high density areas are significantly higher than what would be expected by population density alone. In contrast, trespasser fatalities in medium and low density areas significantly lower than what would be expected by population density alone. Policy makers and safety officials should focus on improving safety efforts in areas with high population density. Specific cities that should be investigated are Richmond, Berkeley, Davis and Modesto. Further research could investigate other factors that could contribute to trespasser strikes in addition to population density such as homelessness, pedestrian crossings, or crime rates.
